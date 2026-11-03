@@ -1,0 +1,2 @@
+PASS: primary/alternate/failure recovery and load-aware route switching; in-place rule replacement; hysteresis; OpenFlow message encoding
+This is not a live Mininet integration test.
