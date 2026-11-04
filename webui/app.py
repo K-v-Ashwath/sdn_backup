@@ -148,6 +148,8 @@ def stop_network():
 def control_switch(name, action):
     if name not in ('s1', 's2', 's3', 's4') or action not in ('down', 'up'):
         return jsonify(error='Invalid switch or action'), 400
+    if name in ('s1', 's4') and action == 'down':
+        return jsonify(error=f'{name} is a protected core switch and cannot be disabled'), 403
     with lock:
         net = state.get('net'); running = state['running']; current = state['switch_states'].get(name, 'up')
     if not running or net is None:
@@ -209,16 +211,18 @@ SERVER_OF={v:k for k,v in ENDPOINTS.items()}
 @app.post('/api/transfer')
 def transfer():
     if not state['running']: return jsonify(error='Network is not running'),400
-    data=request.get_json(force=True,silent=True) or {}; path=Path(data.get('path','')).resolve(); server=data.get('server','both')
+    data=request.get_json(force=True,silent=True) or {}; path=Path(data.get('path','')).resolve(); server=data.get('server','both'); flip_bit=bool(data.get('flip_bit', False))
     if not path.is_file() or UPLOADS.resolve() not in path.parents: return jsonify(error='Invalid upload reference'),400
     endpoints={'A':[ENDPOINTS['A']],'B':[ENDPOINTS['B']],'both':[ENDPOINTS['A'],ENDPOINTS['B']]}.get(server)
     if not endpoints: return jsonify(error='Invalid server selection'),400
     net=state['net']; tid=str(int(time.time()*1000)); out=RUNTIME/(tid+'.json'); log=RUNTIME/(tid+'.log')
     # The client sends to every selected server at once and keeps retrying a server for ~1 minute of
     # consecutive failures, so one unreachable server cannot hold up (or fail) the other copy.
-    proc=net.get('h1').popen([sys.executable,'-u',str(ROOT/'client.py'),str(path),'--servers',*endpoints,'--attempts','12','--timeout','4','--json',str(out)],stdout=log.open('w'),stderr=subprocess.STDOUT)
+    cmd=[sys.executable,'-u',str(ROOT/'client.py'),str(path),'--servers',*endpoints,'--attempts','12','--timeout','4','--json',str(out)]
+    if flip_bit: cmd.append('--flip-bit')
+    proc=net.get('h1').popen(cmd,stdout=log.open('w'),stderr=subprocess.STDOUT)
     routes_now = json.loads((RUNTIME/'routes.json').read_text()).get('routes', {}) if (RUNTIME/'routes.json').exists() else {}
-    item={'id':tid,'filename':path.name.split('_',1)[-1],'size':path.stat().st_size,'server':server,'status':'running','started':time.time(),'result':None,'process':proc,'json':out,'log':log,'routes_at_start':routes_now,'progress':{},'_pos':0}
+    item={'id':tid,'filename':path.name.split('_',1)[-1],'size':path.stat().st_size,'server':server,'status':'running','started':time.time(),'result':None,'process':proc,'json':out,'log':log,'routes_at_start':routes_now,'progress':{},'flip_bit':flip_bit,'_pos':0}
     with lock: state['transfers'].insert(0,item)
     event('Transfer started: '+item['filename']+' → '+server)
     threading.Thread(target=watch_transfer,args=(item,),daemon=True).start()
@@ -243,7 +247,11 @@ def _update_progress(item):
             try: rec=json.loads(line[9:])
             except ValueError: continue
             key=SERVER_OF.get(rec.get('endpoint'))
-            if key: item['progress'][key]=rec
+            if key:
+                item['progress'][key]=rec
+                if rec.get('state') == 'checksum_failure' and not item.get('_checksum_event_'+key):
+                    item['_checksum_event_'+key]=True
+                    event('Server '+key+' rejected a corrupted chunk checksum for '+item['filename']+'; client is retrying the original data', 'error')
 
 def watch_transfer(item):
     code=item['process'].wait()
@@ -283,7 +291,7 @@ def status():
                 except (OSError, ValueError):
                     rec={'rx_bytes':0,'tx_bytes':0,'rx_packets':0,'tx_packets':0}
                 live_links.append({'id':lid,'switch':node,'peer':peer,'status':link_states.get(lid,'up'),**rec})
-    server_info={k:{'running':p.poll() is None,'files':list_files(RUNTIME/('storage'+k))} for k,p in servers.items()}
+    server_info={k:{'running':(k in servers and servers[k].poll() is None),'files':list_files(RUNTIME/('storage'+k))} for k in ('A','B')}
     try:
         route_state=json.loads((RUNTIME/'routes.json').read_text())
     except Exception:
@@ -291,7 +299,7 @@ def status():
     transfers=[]
     for t in transfers_src:
         if t['status']=='running': update_progress(t)
-        transfers.append({k:t.get(k) for k in ('id','filename','size','server','status','started','exit_code')} | {'result':t.get('result') or [],'progress':t.get('progress',{}),'routes':t.get('routes_at_start',{})})
+        transfers.append({k:t.get(k) for k in ('id','filename','size','server','status','started','exit_code')} | {'result':t.get('result') or [],'progress':t.get('progress',{}),'routes':t.get('routes_at_start',{}),'flip_bit':t.get('flip_bit',False)})
     return jsonify(running=running,starting=state['starting'],mode=state['mode'],switches=switches,link_states=link_states,uptime=(time.time()-state['started_at'] if state['started_at'] else 0),
                    latency_ms=sample['latency'] if running else None,flows=sample['flows'] if running else {},links=live_links,servers=server_info,routes=route_state.get('routes',{}),link_metrics=route_state.get('link_metrics',[]),cost_model=route_state.get('cost_model'),transfers=transfers,events=events,error=state['error'])
 

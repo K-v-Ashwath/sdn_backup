@@ -39,13 +39,9 @@ The dashboard exposes per-transfer diagnostics from the TCP client. The client e
 
 The topology animation samples Linux interface RX/TX byte counters on the Mininet switch ports. It establishes a baseline on the first poll and animates only when a later sample shows a counter increase. A direction-aware SVG animation moves particles along the corresponding edge. No particles should appear while counters remain unchanged. This telemetry is sampled every 2.5 seconds by the dashboard.
 
-### Load-aware routing telemetry
+### Routing
 
-The dashboard now shows per-link utilisation and dynamic cost from POX's
-OpenFlow port-statistics polling. Dynamic mode uses measured byte-counter
-rates plus the topology's configured TCLink delay in its Dijkstra cost.
-Static mode retains fixed base costs. The delay shown is configured propagation
-delay, not a live RTT measurement.
+The dashboard displays the routes published by POX and whether each server is reachable. The separate live per-link utilisation and link-cost display has been removed.
 
 ## Reliability fixes (latest version)
 
@@ -53,3 +49,19 @@ delay, not a live RTT measurement.
 - **One unreachable server no longer blocks the other.** The client sends to all selected servers in parallel. A transfer can finish as **PARTIAL** (stored on one server, failed on the other); each server has its own progress card showing *Sending*, *Reconnecting*, *Stored and verified* or *Failed*.
 - **No blank window when routes change.** The controller replaces flow rules in place instead of deleting the table first, and load-aware re-routing has hysteresis (new path must be ≥40 % cheaper and 20 s since the last change) so a busy path does not bounce traffic back and forth. A failed link or switch is still abandoned immediately.
 - UI/back-end fixes: status polling no longer blocks on Mininet (background sampler + lock), single polling loop, no repeated error toasts, upload button/progress no longer flicker or allow double submit, same file can be chosen twice, traffic particles on the h3/h4 links point the right way, stopping while starting cleans up, stale `routes.json` is cleared on start, safer upload file names, JSON errors for oversized uploads.
+
+## Retrieval, telemetry graphs and checksum fault injection
+
+- **Protected switches:** `s1` and `s4` are core switches and cannot be taken down from the UI or through the switch-control API. `s2` and `s3` remain available for switch-failure experiments.
+- **Live graphs:** the dashboard plots aggregate network throughput from Mininet interface RX/TX counter deltas (Mbps) and ICMP RTT from h1 to Server A (ms). Aggregate throughput can count the same payload on multiple hops; it is not application goodput. Delay is round-trip ping latency, not one-way link delay.
+- **Stored-file retrieval:** each server card lists its `.bin` objects and provides a Download link. The object filename is the 64-character SHA-256 digest plus `.bin`; this is content addressing/integrity identification, **not encryption**. Files are stored under `results/webui/storageA/` and `results/webui/storageB/` on the VM. The API download routes are `/api/file/A/<sha256>.bin` and `/api/file/B/<sha256>.bin`.
+- **Bit-flip demonstration:** enable “Flip one bit during transmission” before uploading. The client intentionally changes one bit in the first transmitted chunk but sends the original chunk digest. The receiving server rejects that chunk with a SHA-256 mismatch; the client reconnects and retries the unmodified chunk, after which the transfer can complete. The event stream records the checksum rejection. Use a new file (or a file whose content has changed) when repeating the demo, since an already-stored identical SHA-256 object may be accepted as complete without retransmission.
+
+SHA-256 is a cryptographic hash used here to detect accidental/corrupt data; it does not conceal file contents. The dashboard remains an unauthenticated lab tool: anyone who can reach it can potentially download stored files.
+
+
+## Terminal commands in the dashboard
+
+The **Terminal commands** panel provides copyable commands to tail the dashboard-managed POX log, start POX manually, and open the interactive Mininet CLI. The dashboard owns its own controller and Mininet network while it is running. To use a separate Mininet CLI, click **Stop network** first, start `sudo ./run_controller.sh dynamic` in one terminal, then run `sudo python3 topology.py --scenario cli --tag manual_cli` in another. In the Mininet prompt, use `nodes`, `net`, `links`, `dump`, and `pingall`; use `exit` to leave the CLI. Do not run a second controller or topology alongside the dashboard-managed network.
+
+The dashboard no longer displays live per-link utilisation or link-cost metrics. The throughput and ping-delay graphs remain available.
