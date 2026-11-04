@@ -82,3 +82,8 @@ The dashboard's **Live link costs & utilisation** panel displays each link's
 measured utilisation, configured delay, and current dynamic cost. Allow at
 least two statistics polling intervals after starting the network before
 expecting meaningful utilisation values; idle links correctly remain near 0%.
+
+
+### Bit-flip / checksum demonstration
+
+Enable **Flip one bit during transmission** before starting a transfer. The sender corrupts the first transmitted chunk while retaining the original SHA-256 digest. The receiver must reject that chunk; the sender reconnects and retries the original bytes. A successful final whole-file SHA-256 verification is expected after recovery. Transfer history records `checksum_rejected`, `checksum_failures`, and `bit_flip_injected` so the failed integrity check remains visible even after the retry succeeds.
