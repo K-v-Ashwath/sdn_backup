@@ -88,7 +88,7 @@ expecting meaningful utilisation values; idle links correctly remain near 0%.
 
 Enable **Flip one bit during transmission** before starting a transfer. The sender corrupts the first transmitted chunk while retaining the original SHA-256 digest. The receiver must reject that chunk; the sender reconnects and retries the original bytes. A successful final whole-file SHA-256 verification is expected after recovery. Transfer history records `checksum_rejected`, `checksum_failures`, and `bit_flip_injected` so the failed integrity check remains visible even after the retry succeeds.
 
-###Contributions : 
+#Contributions : 
 1. Kavana M Rao - Application programming(client and server) , TCP based file transfer.
 2. K V Ashwath - SDN , pox controller , UI.
 3. Himani A C - Testing , validation , error simulation .
